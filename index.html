@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Smart Camera & Relay Dashboard</title>
+
+  <!-- Firebase Web SDK v8 Compat -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+
+  <style>
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #121212; color: #fff; text-align: center; margin: 0; padding: 20px;}
+    .card { background: #1e1e1e; border-radius: 12px; padding: 25px; max-width: 550px; margin: 20px auto; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
+    
+    input[type="email"], input[type="password"] {
+      width: 85%;
+      padding: 12px;
+      margin: 8px 0;
+      border: 1px solid #333;
+      border-radius: 6px;
+      background: #2a2a2a;
+      color: #fff;
+      font-size: 15px;
+      box-sizing: border-box;
+    }
+    input:focus { outline: none; border-color: #1565c0; }
+
+    button { padding: 12px 20px; margin: 10px; border: none; border-radius: 6px; font-size: 15px; font-weight: bold; cursor: pointer; color: white; transition: 0.2s;}
+    button:active { transform: scale(0.98); }
+    .btn-login { background: #1565c0; width: 85%; font-size: 16px; }
+    .btn-logout { background: #b71c1c; padding: 8px 16px; font-size: 14px; float: right; }
+    .btn-auto { background: #2e7d32; }
+    .btn-manual { background: #1565c0; }
+    .btn-relay-on { background: #d32f2f; }
+    .btn-relay-off { background: #424242; }
+    .btn-capture { background: #ef6c00; width: 100%; font-size: 18px; font-weight: bold;}
+    button:disabled { opacity: 0.3; cursor: not-allowed; }
+    
+    img { width: 100%; max-width: 500px; border-radius: 8px; margin-top: 15px; border: 1px solid #333; }
+    .status-text { font-size: 18px; color: #4caf50; font-weight: bold;}
+    .error-msg { color: #ff5252; font-size: 14px; margin-top: 10px; display: none; }
+    .header-bar { max-width: 550px; margin: 0 auto; overflow: hidden; padding-bottom: 10px; }
+  </style>
+</head>
+<body>
+
+  <!-- LOGIN SECTION -->
+  <div id="login-card" class="card">
+    <h2>🔐 Dashboard Access</h2>
+    <p style="color: #aaa; font-size: 14px;">Sign in with your Firebase credentials</p>
+    
+    <input type="email" id="login-email" placeholder="Email Address" required><br>
+    <input type="password" id="login-password" placeholder="Password" required><br>
+    <button class="btn-login" onclick="login()">Sign In</button>
+    
+    <div id="login-error" class="error-msg"></div>
+  </div>
+
+  <!-- MAIN DASHBOARD SECTION (Hidden until authenticated) -->
+  <div id="main-dashboard" style="display: none;">
+    
+    <div class="header-bar">
+      <button class="btn-logout" onclick="logout()">🚪 Logout</button>
+    </div>
+
+    <h2>Smart Relay & Camera Monitor</h2>
+    
+    <div class="card">
+      <h3>Relay Control</h3>
+      <p>Current Mode: <span id="mode-text" class="status-text">Loading...</span></p>
+      <button id="btn-auto" class="btn-auto" onclick="setMode('auto')">Auto Mode (LDR)</button>
+      <button id="btn-manual" class="btn-manual" onclick="setMode('manual')">Manual Mode</button>
+      
+      <hr style="border:0.5px solid #333; margin:20px 0;">
+      
+      <p>Relay Status: <span id="relay-status" class="status-text">Loading...</span></p>
+      <button id="btn-on" class="btn-relay-on" onclick="setRelay(true)">Turn Relay ON</button>
+      <button id="btn-off" class="btn-relay-off" onclick="setRelay(false)">Turn Relay OFF</button>
+    </div>
+
+    <div class="card">
+      <h3>Camera Viewer</h3>
+      <button id="btn-cap" class="btn-capture" onclick="triggerCapture()">📸 Capture New Photo</button>
+      <p>Latest Snapshot:</p>
+      <img id="latest-img" src="https://via.placeholder.com/500x300?text=No+Image+Yet" alt="Latest Capture">
+    </div>
+
+  </div>
+
+<script>
+  // Firebase Credentials
+  const firebaseConfig = {
+    apiKey: "AIzaSyC9VqyV3xSIn91Y7dRZTjyi9c6BqdkHY9s",
+    authDomain: "acuostic-and-visual.firebaseapp.com",
+    databaseURL: "https://acuostic-and-visual-default-rtdb.asia-southeast1.firebasedatabase.app",
+    projectId: "acuostic-and-visual",
+    storageBucket: "acuostic-and-visual.firebasestorage.app",
+    messagingSenderId: "25323256500",
+    appId: "1:25323256500:web:be216370a291c0eafaf5e1"
+  };
+
+  firebase.initializeApp(firebaseConfig);
+  const auth = firebase.auth();
+  const db = firebase.database();
+
+  // References
+  const modeRef = db.ref('/control/mode');
+  const manualRelayRef = db.ref('/control/manual_relay');
+  const captureRef = db.ref('/control/trigger_capture');
+  const actualRelayStatusRef = db.ref('/status/relay_active');
+  const latestImageRef = db.ref('/status/latestImage');
+
+  // AUTHENTICATION LOGIC
+  function login() {
+    const email = document.getElementById('login-email').value;
+    const password = document.getElementById('login-password').value;
+    const errorDiv = document.getElementById('login-error');
+
+    errorDiv.style.display = 'none';
+
+    auth.signInWithEmailAndPassword(email, password)
+      .catch((error) => {
+        errorDiv.innerText = error.message;
+        errorDiv.style.display = 'block';
+      });
+  }
+
+  function logout() {
+    auth.signOut();
+  }
+
+  // Auth State Listener
+  auth.onAuthStateChanged((user) => {
+    if (user) {
+      document.getElementById('login-card').style.display = 'none';
+      document.getElementById('main-dashboard').style.display = 'block';
+      attachDatabaseListeners();
+    } else {
+      document.getElementById('login-card').style.display = 'block';
+      document.getElementById('main-dashboard').style.display = 'none';
+    }
+  });
+
+  // DASHBOARD CONTROL FUNCTIONS
+  function setMode(mode) {
+    modeRef.set(mode);
+  }
+
+  function setRelay(state) {
+    manualRelayRef.set(state);
+  }
+
+  function triggerCapture() {
+    document.getElementById('btn-cap').innerText = "⏳ Capturing... (Please wait)";
+    document.getElementById('btn-cap').disabled = true;
+    captureRef.set(true);
+  }
+
+  // REAL-TIME DATABASE LISTENERS
+  function attachDatabaseListeners() {
+    modeRef.on('value', (snap) => {
+      const mode = snap.val();
+      document.getElementById('mode-text').innerText = mode ? mode.toUpperCase() : "UNKNOWN";
+      
+      const isAuto = (mode === 'auto');
+      document.getElementById('btn-on').disabled = isAuto;
+      document.getElementById('btn-off').disabled = isAuto;
+    });
+
+    actualRelayStatusRef.on('value', (snap) => {
+      document.getElementById('relay-status').innerText = snap.val() ? "ON 🔴" : "OFF ⚫";
+    });
+
+    latestImageRef.on('value', (snap) => {
+      const url = snap.val();
+      if(url) {
+        document.getElementById('latest-img').src = url;
+        document.getElementById('btn-cap').innerText = "📸 Capture New Photo";
+        document.getElementById('btn-cap').disabled = false;
+      }
+    });
+  }
+</script>
+</body>
+</html>
