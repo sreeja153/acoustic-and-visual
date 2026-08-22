@@ -222,6 +222,73 @@
     border-radius: 14px;
   }
 
+  /* ---------- Enhanced device list card ---------- */
+  .device-list-card{
+    background: var(--bg-panel);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 14px;
+    margin-bottom: 14px;
+  }
+  .device-list-top{
+    display:flex;
+    gap: 12px;
+    cursor: pointer;
+  }
+  .device-thumb-wrap{
+    width: 72px; height: 72px;
+    border-radius: 10px;
+    overflow:hidden;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    flex-shrink:0;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .device-thumb{ width:100%; height:100%; object-fit:cover; display:none; }
+  .device-thumb-placeholder{
+    color: var(--text-dim);
+    font-size: 10px;
+    text-align:center;
+    padding: 4px;
+  }
+  .device-list-info{ flex:1; min-width:0; }
+  .device-list-btns{
+    display:flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+  .mini-btn{
+    background: var(--bg-panel-raised);
+    border: 1px solid var(--line);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+    font-family: var(--font-body);
+    cursor:pointer;
+  }
+  .mini-btn:hover{ border-color: var(--moss); }
+
+  .device-toggle-row{
+    display:flex;
+    gap: 8px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+  }
+  .mini-toggle-card{
+    flex:1;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    font-size: 12px;
+    color: var(--text-dim);
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 8px 10px;
+  }
+
   .add-row{
     display:flex;
     gap: 10px;
@@ -578,6 +645,12 @@ function loadDevices(){
     const data = snap.val() || {};
     const keys = Object.keys(data);
 
+    // detach any previous per-device status listeners before re-rendering
+    Object.keys(deviceListeners).forEach(k => {
+      db.ref('devices/' + k + '/status').off('value', deviceListeners[k]);
+    });
+    deviceListeners = {};
+
     if(keys.length === 0){
       listEl.innerHTML = '<div class="empty-state">No devices yet. Scan a QR code or enter a MAC address below to add one.</div>';
       return;
@@ -586,18 +659,97 @@ function loadDevices(){
     listEl.innerHTML = "";
     keys.forEach(key => {
       const card = document.createElement('div');
-      card.className = 'device-card';
+      card.className = 'device-list-card';
       card.innerHTML = `
-        <div>
-          <div class="device-mac">${keyToMac(key)}</div>
-          <div class="device-sub">Tap to open</div>
+        <div class="device-list-top" data-open="${key}">
+          <div class="device-thumb-wrap">
+            <img class="device-thumb" id="thumb-${key}">
+            <div class="device-thumb-placeholder" id="thumb-ph-${key}">No image</div>
+          </div>
+          <div class="device-list-info">
+            <div class="device-mac">${keyToMac(key)}</div>
+            <div class="device-sub" id="seen-${key}">waiting for device...</div>
+            <div class="device-list-btns">
+              <button class="mini-btn" data-action="capture" data-key="${key}">📷 Capture</button>
+            </div>
+          </div>
         </div>
-        <div class="dot"></div>
+        <div class="device-toggle-row">
+          <div class="mini-toggle-card">
+            <span>💧 Sprinkler</span>
+            <div class="toggle-switch" id="card-sprinkler-${key}" data-key="${key}" data-field="sprinkler"><div class="toggle-knob"></div></div>
+          </div>
+          <div class="mini-toggle-card">
+            <span>💡 Light</span>
+            <div class="toggle-switch" id="card-light-${key}" data-key="${key}" data-field="light"><div class="toggle-knob"></div></div>
+          </div>
+        </div>
       `;
-      card.addEventListener('click', () => openDevice(key));
       listEl.appendChild(card);
+
+      const listener = snapshot => updateCardStatus(key, snapshot.val() || {});
+      db.ref('devices/' + key + '/status').on('value', listener);
+      deviceListeners[key] = listener;
+    });
+
+    // Tapping the thumbnail/info area opens the full dashboard
+    listEl.querySelectorAll('[data-open]').forEach(el => {
+      el.addEventListener('click', () => openDevice(el.dataset.open));
+    });
+
+    // Capture button
+    listEl.querySelectorAll('.mini-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const key = btn.dataset.key;
+
+        db.ref('devices/' + key + '/commands/capture').set(true);
+        btn.textContent = "Requesting...";
+        setTimeout(() => { btn.textContent = "📷 Capture"; }, 4000);
+      });
+    });
+
+    // Sprinkler / Light toggles on the card
+    listEl.querySelectorAll('.device-toggle-row .toggle-switch').forEach(t => {
+      t.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const key = t.dataset.key;
+        const field = t.dataset.field;
+        const next = t.dataset.on === "1" ? false : true;
+        db.ref('devices/' + key + '/commands/' + field).set(next);
+      });
     });
   });
+}
+
+function updateCardStatus(key, status){
+  const img = document.getElementById('thumb-' + key);
+  const ph = document.getElementById('thumb-ph-' + key);
+  const seen = document.getElementById('seen-' + key);
+  const sprinklerToggle = document.getElementById('card-sprinkler-' + key);
+  const lightToggle = document.getElementById('card-light-' + key);
+
+  if(!img) return; // card no longer on screen
+
+  if(status.imageUrl){
+    img.src = status.imageUrl;
+    img.style.display = 'block';
+    ph.style.display = 'none';
+  }
+
+  seen.textContent = status.lastSeen
+    ? "Last seen " + new Date(status.lastSeen).toLocaleTimeString()
+    : "waiting for device...";
+
+  if(sprinklerToggle) setToggleVisual(sprinklerToggle.id, !!status.sprinkler);
+  if(lightToggle) setToggleVisual(lightToggle.id, !!status.light);
+}
+
+/* Logs a device MAC to your Google Sheet whenever it's added from the app */
+function logMacToSheet(mac){
+  const url = "https://script.google.com/macros/s/AKfycbxVEYJLC45Dp0RtjhYYuKE7a-m6Mr8MrzSjYFdAEOmq4uF4HiFY21B_TI8h89h3Lbv7eQ/exec"
+    + "?mac=" + encodeURIComponent(mac) + "&ip=added-from-webapp";
+  fetch(url, { mode: 'no-cors' }).catch(() => {});
 }
 
 function addDevice(mac){
@@ -607,6 +759,7 @@ function addDevice(mac){
   }
   const key = macToKey(mac);
   db.ref('users/' + currentUser.uid + '/devices/' + key).set(true);
+  logMacToSheet(mac.trim().toUpperCase());
   document.getElementById('manual-mac').value = "";
 }
 
