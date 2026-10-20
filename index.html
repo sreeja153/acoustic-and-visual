@@ -442,6 +442,16 @@
   // ---- controls: sprinkler / light / capture-now ----
   // Writes go to the same /commands node the device already polls every
   // few seconds, so a toggle here reaches the relay within a couple seconds.
+  //
+  // REVERSED LOGIC: the device's relay currently switches backwards
+  // (electrically inverted) and the firmware can't be reflashed right now,
+  // so this page compensates in software - both the Firebase WRITE and the
+  // DISPLAY read are inverted here, nowhere else. A toggle showing "on" in
+  // the UI still means "sprinkler physically on," it's just that the raw
+  // value sitting in Firebase for /commands/sprinkler and /commands/light is
+  // the opposite of what's shown. Once the firmware's RELAY_ACTIVE_LOW flag
+  // is fixed and reflashed, remove the "!" in the four spots marked below
+  // to go back to normal, non-inverted behavior.
   const commandsRef = db.ref(`devices/${DEVICE_KEY}/commands`);
   const sprinklerToggle = document.getElementById("sprinklerToggle");
   const lightToggle = document.getElementById("lightToggle");
@@ -456,8 +466,8 @@
 
   commandsRef.on("value", snapshot => {
     const cmds = snapshot.val() || {};
-    setToggle(sprinklerToggle, sprinklerStateEl, !!cmds.sprinkler);
-    setToggle(lightToggle, lightStateEl, !!cmds.light);
+    setToggle(sprinklerToggle, sprinklerStateEl, !cmds.sprinkler); // REVERSED (read)
+    setToggle(lightToggle, lightStateEl, !cmds.light);             // REVERSED (read)
     if (cmds.capture) {
       captureBtn.disabled = true;
       captureBtn.textContent = "Capturing…";
@@ -469,11 +479,11 @@
 
   sprinklerToggle.addEventListener("click", () => {
     const next = sprinklerToggle.getAttribute("aria-checked") !== "true";
-    commandsRef.child("sprinkler").set(next);
+    commandsRef.child("sprinkler").set(!next); // REVERSED (write)
   });
   lightToggle.addEventListener("click", () => {
     const next = lightToggle.getAttribute("aria-checked") !== "true";
-    commandsRef.child("light").set(next);
+    commandsRef.child("light").set(!next); // REVERSED (write)
   });
   captureBtn.addEventListener("click", () => {
     commandsRef.child("capture").set(true);
